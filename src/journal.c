@@ -809,6 +809,8 @@ int init_journal(void)
 	unsigned int		blocknr = 0;
 	unsigned int		maxlen = 0;
 	unsigned int		wrapflag;
+	size_t			pt_bytes;
+	size_t			ptl_bytes;
 
 	/* First, check to see if there's an ext2 superblock header */
 	retval = read_journal_block( 0, buf, 2048, &got);
@@ -852,14 +854,18 @@ int init_journal(void)
 	wrapflag = WRAP_UNDEF ;
 
 	
-	pt_buff = malloc(maxlen * sizeof(journal_descriptor_tag_t));
+	pt_bytes = maxlen * sizeof(journal_descriptor_tag_t);
+	ptl_bytes = maxlen * sizeof(__u32);
+	pt_buff = malloc(pt_bytes + ptl_bytes);
 	pt = pt_buff ;
 	pt_count = 0;
 	if (pt_buff == NULL) {
-		fprintf(stderr,"Error: can't allocate %u Memory\n",maxlen * sizeof(journal_descriptor_tag_t));
+		fprintf(stderr,"Error: can't allocate %lu Memory\n",
+			(unsigned long)(pt_bytes + ptl_bytes));
 		goto errout;
 	}
-	ptl = (__u32*)(pt_buff + (maxlen * sizeof(journal_descriptor_tag_t)));
+	ptl = (__u32*) ((char*) pt_buff + pt_bytes);
+	ptl += maxlen;
 	ptl_count = 0;
 
 #ifdef DEBUG
@@ -926,6 +932,10 @@ errout:
 		free(pt_buff);
 		pt_buff = NULL;
 	}
+	pt = NULL;
+	ptl = NULL;
+	pt_count = 0;
+	ptl_count = 0;
 	return JOURNAL_ERROR ;
 
 }
@@ -1142,5 +1152,4 @@ int get_pool_block(char *buf){
 	}
 return ret;
 }
-
 
