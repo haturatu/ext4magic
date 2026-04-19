@@ -31,6 +31,7 @@
 #endif
 
 #include <ext2fs/ext2fs.h>
+#include <ext2fs/ext2_ext_attr.h>
 #include "util.h"
 #include "hard_link_stack.h"
 #include "inode.h"
@@ -77,6 +78,8 @@ struct alloc_recover_stat{
 	__u32 allocated;
 	__u32 recovered;};
 
+#define EXT4_XATTR_INDEX_SYSTEM 7
+
 
 static int inode_has_inline_data(struct ext2_inode *inode)
 {
@@ -87,36 +90,103 @@ static int inode_has_inline_data(struct ext2_inode *inode)
 static int read_inline_data(ext2_ino_t inode_nr, struct ext2_inode *inode,
 			    char **buf_out, size_t *size_out)
 {
-	errcode_t retval;
-	size_t size;
+	struct ext2_inode_large *large_inode;
+	struct ext2_ext_attr_entry *entry;
+	__u32 *magic;
 	char *buf;
+	char *start;
+	char *end;
+	char *value;
+	size_t size;
+	size_t copied;
+	unsigned int inode_size;
+	unsigned int extra_isize;
+	unsigned int value_offs;
+	unsigned int value_size;
+	unsigned int storage_size;
+	__u64 i_size;
 
 	*buf_out = NULL;
 	*size_out = 0;
 
 	if (!inode_has_inline_data(inode))
 		return 1;
-	if (!ext2fs_test_inode_bitmap(current_fs->inode_map, inode_nr))
-		return 1;
 
-	retval = ext2fs_inline_data_size(current_fs, inode_nr, &size);
-	if (retval)
-		return retval;
+	i_size = inode->i_size | ((unsigned long long) inode->i_size_high << 32);
+	size = (size_t) i_size;
+	if (!size)
+		return 0;
 
 	buf = malloc(size + 1);
 	if (!buf)
 		return ENOMEM;
+	memset(buf, 0, size + 1);
 
-	retval = ext2fs_inline_data_get(current_fs, inode_nr, inode, buf, &size);
-	if (retval) {
-		free(buf);
-		return retval;
+	copied = (size > EXT4_MIN_INLINE_DATA_SIZE) ? EXT4_MIN_INLINE_DATA_SIZE : size;
+	memcpy(buf, inode->i_block, copied);
+	if (copied == size) {
+		*buf_out = buf;
+		*size_out = size;
+		return 0;
 	}
 
-	buf[size] = 0;
-	*buf_out = buf;
-	*size_out = size;
-	return 0;
+	inode_size = EXT2_INODE_SIZE(current_fs->super);
+	if (inode_size <= EXT2_GOOD_OLD_INODE_SIZE) {
+		free(buf);
+		return EXT2_ET_NO_INLINE_DATA;
+	}
+
+	large_inode = (struct ext2_inode_large *) inode;
+	extra_isize = ext2fs_le16_to_cpu(large_inode->i_extra_isize);
+	if (extra_isize > inode_size - EXT2_GOOD_OLD_INODE_SIZE) {
+		free(buf);
+		return EXT2_ET_NO_INLINE_DATA;
+	}
+
+	storage_size = inode_size - EXT2_GOOD_OLD_INODE_SIZE - extra_isize;
+	magic = (__u32 *)((char *) inode + EXT2_GOOD_OLD_INODE_SIZE + extra_isize);
+	if (storage_size < sizeof(__u32) ||
+	    ext2fs_le32_to_cpu(*magic) != EXT2_EXT_ATTR_MAGIC) {
+		free(buf);
+		return EXT2_ET_NO_INLINE_DATA;
+	}
+
+	start = (char *) magic + sizeof(__u32);
+	end = (char *) inode + inode_size;
+	entry = (struct ext2_ext_attr_entry *) start;
+	while (!EXT2_EXT_IS_LAST_ENTRY(entry)) {
+		if ((char *) entry + sizeof(struct ext2_ext_attr_entry) > end) {
+			free(buf);
+			return EXT2_ET_NO_INLINE_DATA;
+		}
+		if (entry->e_name_index == EXT4_XATTR_INDEX_SYSTEM &&
+		    entry->e_name_len == 4 &&
+		    !memcmp(EXT2_EXT_ATTR_NAME(entry), "data", 4)) {
+			value_offs = ext2fs_le16_to_cpu(entry->e_value_offs);
+			value_size = ext2fs_le32_to_cpu(entry->e_value_size);
+			value = start + value_offs;
+			if ((value_offs > storage_size) ||
+			    (value_size > storage_size) ||
+			    (value + value_size > end)) {
+				free(buf);
+				return EXT2_ET_NO_INLINE_DATA;
+			}
+			if (copied + value_size < copied || copied + value_size < value_size) {
+				free(buf);
+				return EXT2_ET_NO_INLINE_DATA;
+			}
+			if (copied + value_size < size)
+				size = copied + value_size;
+			memcpy(buf + copied, value, size - copied);
+			*buf_out = buf;
+			*size_out = size;
+			return 0;
+		}
+		entry = EXT2_EXT_ATTR_NEXT(entry);
+	}
+
+	free(buf);
+	return EXT2_ET_NO_INLINE_DATA;
 }
 
 
