@@ -872,7 +872,9 @@ int init_journal(void)
 	j_incompat = jsb->s_feature_incompat;
 	if (j_incompat & ~(JFS_FEATURE_INCOMPAT_REVOKE |
 			   JFS_FEATURE_INCOMPAT_64BIT |
-			   JFS_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
+			   JFS_FEATURE_INCOMPAT_ASYNC_COMMIT |
+			   JFS_FEATURE_INCOMPAT_CSUM_V2 |
+			   JFS_FEATURE_INCOMPAT_CSUM_V3)) {
 		fprintf(stderr,
 			"Unsupported journal incompat feature flags: 0x%08x\n",
 			(unsigned int) j_incompat);
