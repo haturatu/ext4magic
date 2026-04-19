@@ -143,8 +143,18 @@ typedef struct journal_block_tag_s
 	__u32		t_blocknr_high; /* most-significant high 32bits. */
 } journal_block_tag_t;
 
+typedef struct journal_block_tag3_s
+{
+	__u32		t_blocknr;
+	__u32		t_flags;
+	__u32		t_blocknr_high;
+	__u32		t_checksum;
+} journal_block_tag3_t;
+
+#define JBD_TAG_SIZE_CSUM32 8
 #define JBD_TAG_SIZE64 (sizeof(journal_block_tag_t))
 #define JBD_TAG_SIZE32 (8)
+#define JBD_TAG3_SIZE32 (sizeof(journal_block_tag3_t))
 
 /*
  * The revoke descriptor: used on disk to describe a series of blocks to
@@ -229,12 +239,18 @@ typedef struct journal_superblock_s
 #define JFS_FEATURE_INCOMPAT_REVOKE		0x00000001
 #define JFS_FEATURE_INCOMPAT_64BIT		0x00000002
 #define JFS_FEATURE_INCOMPAT_ASYNC_COMMIT	0x00000004
+#define JFS_FEATURE_INCOMPAT_CSUM_V2		0x00000008
+#define JFS_FEATURE_INCOMPAT_CSUM_V3		0x00000010
+#define JFS_FEATURE_INCOMPAT_FAST_COMMIT	0x00000020
 
 /* Features known to this kernel version: */
 #define JFS_KNOWN_COMPAT_FEATURES	0
 #define JFS_KNOWN_ROCOMPAT_FEATURES	0
 #define JFS_KNOWN_INCOMPAT_FEATURES	(JFS_FEATURE_INCOMPAT_REVOKE|\
-					 JFS_FEATURE_INCOMPAT_ASYNC_COMMIT)
+					 JFS_FEATURE_INCOMPAT_64BIT|\
+					 JFS_FEATURE_INCOMPAT_ASYNC_COMMIT|\
+					 JFS_FEATURE_INCOMPAT_CSUM_V2|\
+					 JFS_FEATURE_INCOMPAT_CSUM_V3)
 
 #ifdef __KERNEL__
 
