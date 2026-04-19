@@ -61,50 +61,11 @@ struct block_context {
 //#ifdef BLOCK_FLAG_READ_ONLY
 
 //#include <ext2fs/ext3_extents.h>
-struct extent_path {
-        char            *buf;
-        int             entries;
-        int             max_entries;
-        int             left;
-        int             visit_num;
-        int             flags;
-        blk64_t         end_blk;
-        void            *curr;
-};
-
-
-struct ext2_extent_handle {
-        errcode_t               magic;
-        ext2_filsys             fs;
-        ext2_ino_t              ino;
-        struct ext2_inode       *inode;
-	struct ext2_inode       inodebuf;
-        int                     type;
-        int                     level;
-        int                     max_depth;
-        struct extent_path      *path;
-};
-
-
-
-// Leave the inode intact 
 void local_ext2fs_extent_free(ext2_extent_handle_t handle)
 {
-        int                     i;
-
-        if (!handle)
-                return;
-
-//        if (handle->inode)
-//                ext2fs_free_mem(&handle->inode);
-        if (handle->path) {
-                for (i=1; i <= handle->max_depth; i++) {
-                        if (handle->path[i].buf)
-                                ext2fs_free_mem(&handle->path[i].buf);
-                }
-                ext2fs_free_mem(&handle->path);
-        }
-        ext2fs_free_mem(&handle);
+	if (!handle)
+		return;
+	ext2fs_extent_free(handle);
 }
 
 
@@ -136,62 +97,7 @@ int read_block64 ( ext2_filsys fs, blk64_t *blocknr, void *buf )
 
 errcode_t local_ext2fs_extent_open(ext2_filsys fs, struct ext2_inode inode,
                           ext2_extent_handle_t *ret_handle) {
-
-        struct ext2_extent_handle       *handle;
-        struct ext3_extent_header       *eh;
-        int 				i;
-        errcode_t                       retval;
-        retval = ext2fs_get_mem(sizeof(struct ext2_extent_handle), &handle);
-        if (retval)
-                return retval;
-        memset(handle, 0, sizeof(struct ext2_extent_handle));
-
-        handle->ino = 0;
-        handle->fs = fs;
-        handle->inode = &handle->inodebuf;
-        memcpy(handle->inode, &inode, sizeof(struct ext2_inode));
-
-        eh = (struct ext3_extent_header *) &handle->inode->i_block[0];
-        for (i=0; i < EXT2_N_BLOCKS; i++)
-                if (handle->inode->i_block[i])
-                        break;
-        if (i >= EXT2_N_BLOCKS) {
-                eh->eh_magic = ext2fs_cpu_to_le16(EXT3_EXT_MAGIC);
-                eh->eh_depth = 0;
-                eh->eh_entries = 0;
-                i = (sizeof(handle->inode->i_block) - sizeof(*eh)) /
-                        sizeof(struct ext3_extent);
-                eh->eh_max = ext2fs_cpu_to_le16(i);
-                handle->inode->i_flags |= EXT4_EXTENTS_FL;
-        }
-
-
-        handle->max_depth = ext2fs_le16_to_cpu(eh->eh_depth);
-        handle->type = ext2fs_le16_to_cpu(eh->eh_magic);
-
-        retval = ext2fs_get_mem(((handle->max_depth+1) *
-                                 sizeof(struct extent_path)),
-                                &handle->path);
-        memset(handle->path, 0,
-               (handle->max_depth+1) * sizeof(struct extent_path));
-        handle->path[0].buf = (char *) handle->inode->i_block;
-
-        handle->path[0].left = handle->path[0].entries =
-                ext2fs_le16_to_cpu(eh->eh_entries);
-        handle->path[0].max_entries = ext2fs_le16_to_cpu(eh->eh_max);
-        handle->path[0].curr = 0;
-        handle->path[0].end_blk =
-                ((((__u64) handle->inode->i_size_high << 32) +
-                  handle->inode->i_size + (fs->blocksize - 1))
-                 >> EXT2_BLOCK_SIZE_BITS(fs->super));
-        handle->path[0].visit_num = 1;
-        handle->level = 0;
-        handle->magic = EXT2_ET_MAGIC_EXTENT_HANDLE;
-
-        *ret_handle = handle;
-	//free(handle);
-
-        return 0;
+	return ext2fs_extent_open2(fs, 0, &inode, ret_handle);
 }
 
 
