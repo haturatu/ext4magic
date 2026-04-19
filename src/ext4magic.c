@@ -261,6 +261,14 @@ static void open_filesystem(char *device, int open_flags, blk_t superblock,
                 return;
         }
 
+        if (EXT2_HAS_RO_COMPAT_FEATURE(current_fs->super,
+                                       EXT4_FEATURE_RO_COMPAT_BIGALLOC)) {
+                fprintf(stderr,
+                        "%s uses unsupported ext4 feature: bigalloc\n",
+                        device);
+                goto errout;
+        }
+
 
         retval = ext2fs_read_inode_bitmap(current_fs);
         if (retval) {
