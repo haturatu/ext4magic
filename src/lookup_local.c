@@ -618,6 +618,15 @@ static errcode_t local_dir_iterate3(ext2_filsys fs,
 	        ctx.priv_data = priv_data;
 	        ctx.errcode = 0;
 	        if (inode_has_inline_data(inode)) {
+	                if (!(flags & ONLY_JOURNAL) &&
+	                    ext2fs_test_inode_bitmap(current_fs->inode_map, dir)) {
+	                        retval = ext2fs_dir_iterate2(fs, dir,
+	                                                     flags | DIRENT_FLAG_INCLUDE_INLINE_DATA,
+	                                                     block_buf, func, priv_data);
+	                        if (!block_buf)
+	                                ext2fs_free_mem(&ctx.buf);
+	                        return retval;
+	                }
 	                retval = local_inline_dir_iterate(fs, dir, inode,
 	                                                  flags | DIRENT_FLAG_INCLUDE_INLINE_DATA,
 	                                                  func, priv_data);
