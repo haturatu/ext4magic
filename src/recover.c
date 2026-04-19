@@ -31,6 +31,7 @@
 #endif
 
 #include <ext2fs/ext2fs.h>
+#include <ext2fs/ext2_ext_attr.h>
 #include "util.h"
 #include "hard_link_stack.h"
 #include "inode.h"
@@ -76,6 +77,117 @@ struct alloc_stat{
 struct alloc_recover_stat{
 	__u32 allocated;
 	__u32 recovered;};
+
+#define EXT4_XATTR_INDEX_SYSTEM 7
+
+
+static int inode_has_inline_data(struct ext2_inode *inode)
+{
+	return (inode->i_flags & EXT4_INLINE_DATA_FL) != 0;
+}
+
+
+static int read_inline_data(ext2_ino_t inode_nr, struct ext2_inode *inode,
+			    char **buf_out, size_t *size_out)
+{
+	struct ext2_inode_large *large_inode;
+	struct ext2_ext_attr_entry *entry;
+	__u32 *magic;
+	char *buf;
+	char *start;
+	char *end;
+	char *value;
+	size_t size;
+	size_t copied;
+	unsigned int inode_size;
+	unsigned int extra_isize;
+	unsigned int value_offs;
+	unsigned int value_size;
+	unsigned int storage_size;
+	__u64 i_size;
+
+	*buf_out = NULL;
+	*size_out = 0;
+
+	if (!inode_has_inline_data(inode))
+		return 1;
+
+	i_size = inode->i_size | ((unsigned long long) inode->i_size_high << 32);
+	size = (size_t) i_size;
+	if (!size)
+		return 0;
+
+	buf = malloc(size + 1);
+	if (!buf)
+		return ENOMEM;
+	memset(buf, 0, size + 1);
+
+	copied = (size > EXT4_MIN_INLINE_DATA_SIZE) ? EXT4_MIN_INLINE_DATA_SIZE : size;
+	memcpy(buf, inode->i_block, copied);
+	if (copied == size) {
+		*buf_out = buf;
+		*size_out = size;
+		return 0;
+	}
+
+	inode_size = EXT2_INODE_SIZE(current_fs->super);
+	if (inode_size <= EXT2_GOOD_OLD_INODE_SIZE) {
+		free(buf);
+		return EXT2_ET_NO_INLINE_DATA;
+	}
+
+	large_inode = (struct ext2_inode_large *) inode;
+	extra_isize = ext2fs_le16_to_cpu(large_inode->i_extra_isize);
+	if (extra_isize > inode_size - EXT2_GOOD_OLD_INODE_SIZE) {
+		free(buf);
+		return EXT2_ET_NO_INLINE_DATA;
+	}
+
+	storage_size = inode_size - EXT2_GOOD_OLD_INODE_SIZE - extra_isize;
+	magic = (__u32 *)((char *) inode + EXT2_GOOD_OLD_INODE_SIZE + extra_isize);
+	if (storage_size < sizeof(__u32) ||
+	    ext2fs_le32_to_cpu(*magic) != EXT2_EXT_ATTR_MAGIC) {
+		free(buf);
+		return EXT2_ET_NO_INLINE_DATA;
+	}
+
+	start = (char *) magic + sizeof(__u32);
+	end = (char *) inode + inode_size;
+	entry = (struct ext2_ext_attr_entry *) start;
+	while (!EXT2_EXT_IS_LAST_ENTRY(entry)) {
+		if ((char *) entry + sizeof(struct ext2_ext_attr_entry) > end) {
+			free(buf);
+			return EXT2_ET_NO_INLINE_DATA;
+		}
+		if (entry->e_name_index == EXT4_XATTR_INDEX_SYSTEM &&
+		    entry->e_name_len == 4 &&
+		    !memcmp(EXT2_EXT_ATTR_NAME(entry), "data", 4)) {
+			value_offs = ext2fs_le16_to_cpu(entry->e_value_offs);
+			value_size = ext2fs_le32_to_cpu(entry->e_value_size);
+			value = start + value_offs;
+			if ((value_offs > storage_size) ||
+			    (value_size > storage_size) ||
+			    (value + value_size > end)) {
+				free(buf);
+				return EXT2_ET_NO_INLINE_DATA;
+			}
+			if (copied + value_size < copied || copied + value_size < value_size) {
+				free(buf);
+				return EXT2_ET_NO_INLINE_DATA;
+			}
+			if (copied + value_size < size)
+				size = copied + value_size;
+			memcpy(buf + copied, value, size - copied);
+			*buf_out = buf;
+			*size_out = size;
+			return 0;
+		}
+		entry = EXT2_EXT_ATTR_NEXT(entry);
+	}
+
+	free(buf);
+	return EXT2_ET_NO_INLINE_DATA;
+}
 
 
 
@@ -321,6 +433,7 @@ int recover_file( char* des_dir,char* pathname, char* filename, struct ext2_inod
 	struct utimbuf   touchtime;
 	mode_t i_mode;
 	int major, minor, type;
+	size_t inline_size = 0;
 
 #ifdef DEBUG
 	printf("RECOVER : INODE=%ld FILENAME=%s/%s\n",inode_nr, pathname,filename);
@@ -390,8 +503,28 @@ int recover_file( char* des_dir,char* pathname, char* filename, struct ext2_inod
 				retval = errno;
 				goto errout;
 			}
-			buf=malloc(current_fs->blocksize);
-			if (buf) {
+			if (inode_has_inline_data(inode)) {
+				retval = read_inline_data(inode_nr, inode, &buf, &inline_size);
+				if (retval) {
+					close(priv.fd);
+					unlink(helpname);
+					retval = -1;
+					goto errout;
+				}
+				if (write(priv.fd, buf, inline_size) != (ssize_t) inline_size) {
+					close(priv.fd);
+					unlink(helpname);
+					retval = -1;
+					goto errout;
+				}
+			} else {
+				buf=malloc(current_fs->blocksize);
+				if (!buf) {
+					fprintf(stderr,"ERROR: can no allocate memory\n");
+					retval = -1;
+					close(priv.fd);
+					goto errout;
+	 			}
 				priv.buf = buf;
 				priv.error = 0;
 				// iterate Data Blocks and if not allocated, write to file
@@ -411,22 +544,21 @@ int recover_file( char* des_dir,char* pathname, char* filename, struct ext2_inod
 					retval = ftruncate(priv.fd,i_size);
 					if (retval){
 						rec_error -= SEEK_ERROR ;	
+						}
 					}
-				}
 		
 			}
-			else {
-				fprintf(stderr,"ERROR: can no allocate memory\n");
-				retval = -1;
-				close(priv.fd);
-				goto errout;
- 			}
 			close(priv.fd);
 		 break;
 
 //symbolic link	
 		case LINUX_S_IFLNK :
-			  if (ext2fs_inode_data_blocks(current_fs,inode)){
+			  if (inode_has_inline_data(inode)) {
+				retval = read_inline_data(inode_nr, inode, &buf, &inline_size);
+				if (retval)
+					goto errout;
+			  }
+			  else if (ext2fs_inode_data_blocks(current_fs,inode)){
 				buf = malloc(current_fs->blocksize + 1); 
 				if (buf) {
 					memset(buf,0,current_fs->blocksize + 1);
@@ -571,7 +703,7 @@ int check_file_stat(struct ext2_inode *inode){
 
 	stat.allocated = 0;
 	stat.recovered = 0;
-	if ((! inode->i_blocks) || (LINUX_S_ISLNK(inode->i_mode) && (inode->i_size < EXT2_N_BLOCKS*4)) ||
+	if (inode_has_inline_data(inode) || (! inode->i_blocks) || (LINUX_S_ISLNK(inode->i_mode) && (inode->i_size < EXT2_N_BLOCKS*4)) ||
 		 ! (ext2fs_inode_data_blocks(current_fs,inode)))
 		retval = 1;
 	else{
@@ -593,7 +725,7 @@ int check_file_recover(struct ext2_inode *inode){
 
 	stat.allocated = 0;
 	stat.not_allocated = 0;
-	if ((! inode->i_blocks) || (LINUX_S_ISLNK(inode->i_mode) && (inode->i_size < EXT2_N_BLOCKS*4)) ||
+	if (inode_has_inline_data(inode) || (! inode->i_blocks) || (LINUX_S_ISLNK(inode->i_mode) && (inode->i_size < EXT2_N_BLOCKS*4)) ||
 		 ! (ext2fs_inode_data_blocks(current_fs,inode)))
 		retval = 100;
 	else{

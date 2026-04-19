@@ -24,6 +24,7 @@
 #endif
 
 #include <ext2fs/ext2fs.h>
+#include <ext2fs/ext2_ext_attr.h>
 //#include <ext2fs/ext2_io.h>
 #include "ext2fsP.h"
 #include <ctype.h>
@@ -34,10 +35,147 @@
 #include "block.h"
 
 #define DIRENT_MIN_LENGTH 12
+#define EXT4_XATTR_INDEX_SYSTEM 7
 extern ext2_filsys     current_fs ;
 
 static const char *monstr[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+
+static int inode_has_inline_data(struct ext2_inode *inode)
+{
+	return (inode->i_flags & EXT4_INLINE_DATA_FL) != 0;
+}
+
+
+static errcode_t get_inline_xattr_data(struct ext2_inode *inode, char **buf_out,
+				       size_t *size_out)
+{
+	struct ext2_inode_large *large_inode;
+	struct ext2_ext_attr_entry *entry;
+	__u32 *magic;
+	char *start;
+	char *end;
+	char *value;
+	unsigned int inode_size;
+	unsigned int extra_isize;
+	unsigned int value_offs;
+	unsigned int value_size;
+	unsigned int storage_size;
+
+	*buf_out = NULL;
+	*size_out = 0;
+
+	inode_size = EXT2_INODE_SIZE(current_fs->super);
+	if (inode_size <= EXT2_GOOD_OLD_INODE_SIZE)
+		return EXT2_ET_NO_INLINE_DATA;
+
+	large_inode = (struct ext2_inode_large *) inode;
+	extra_isize = ext2fs_le16_to_cpu(large_inode->i_extra_isize);
+	if (extra_isize > inode_size - EXT2_GOOD_OLD_INODE_SIZE)
+		return EXT2_ET_NO_INLINE_DATA;
+
+	storage_size = inode_size - EXT2_GOOD_OLD_INODE_SIZE - extra_isize;
+	magic = (__u32 *)((char *) inode + EXT2_GOOD_OLD_INODE_SIZE + extra_isize);
+	if (storage_size < sizeof(__u32) ||
+	    ext2fs_le32_to_cpu(*magic) != EXT2_EXT_ATTR_MAGIC)
+		return EXT2_ET_NO_INLINE_DATA;
+
+	start = (char *) magic + sizeof(__u32);
+	end = (char *) inode + inode_size;
+	entry = (struct ext2_ext_attr_entry *) start;
+	while (!EXT2_EXT_IS_LAST_ENTRY(entry)) {
+		if ((char *) entry + sizeof(struct ext2_ext_attr_entry) > end)
+			return EXT2_ET_NO_INLINE_DATA;
+		if (entry->e_name_index == EXT4_XATTR_INDEX_SYSTEM &&
+		    entry->e_name_len == 4 &&
+		    !memcmp(EXT2_EXT_ATTR_NAME(entry), "data", 4)) {
+			value_offs = ext2fs_le16_to_cpu(entry->e_value_offs);
+			value_size = ext2fs_le32_to_cpu(entry->e_value_size);
+			value = start + value_offs;
+			if ((value_offs > storage_size) ||
+			    (value_size > storage_size) ||
+			    (value + value_size > end))
+				return EXT2_ET_NO_INLINE_DATA;
+			*buf_out = value;
+			*size_out = value_size;
+			return 0;
+		}
+		entry = EXT2_EXT_ATTR_NEXT(entry);
+	}
+
+	return EXT2_ET_NO_INLINE_DATA;
+}
+
+
+static errcode_t iterate_inline_dir_region(ext2_filsys fs, ext2_ino_t dir,
+					   int flags, char *buf, size_t len,
+					   int *entry_type,
+					   int (*func)(ext2_ino_t dir, int entry,
+						       struct ext2_dir_entry *dirent,
+						       int offset, int blocksize,
+						       char *buf, void *priv_data),
+					   void *priv_data)
+{
+	unsigned int offset = 0;
+	unsigned int rec_len;
+	int ret;
+	struct ext2_dir_entry *dirent;
+
+	while (offset + 8 <= len) {
+		dirent = (struct ext2_dir_entry *) (buf + offset);
+		if (ext2fs_get_rec_len(fs, dirent, &rec_len))
+			return EXT2_ET_DIR_CORRUPTED;
+		if (!rec_len)
+			break;
+		if (((offset + rec_len) > len) ||
+		    (rec_len < 8) ||
+		    ((rec_len % 4) != 0) ||
+		    ((((unsigned) dirent->name_len & 0xFF) + 8) > rec_len))
+			return EXT2_ET_DIR_CORRUPTED;
+		if (!dirent->inode && !(flags & DIRENT_FLAG_INCLUDE_EMPTY))
+			goto next;
+
+		ret = func(dir, *entry_type, dirent, offset, fs->blocksize, buf, priv_data);
+		if (ret & DIRENT_ABORT)
+			return 0;
+next:
+		if (*entry_type < DIRENT_OTHER_FILE)
+			(*entry_type)++;
+		offset += rec_len;
+	}
+
+	return 0;
+}
+
+
+static errcode_t local_inline_dir_iterate(ext2_filsys fs, ext2_ino_t dir,
+					  struct ext2_inode *inode, int flags,
+					  int (*func)(ext2_ino_t dir, int entry,
+						      struct ext2_dir_entry *dirent,
+						      int offset, int blocksize,
+						      char *buf, void *priv_data),
+					  void *priv_data)
+{
+	errcode_t retval;
+	char *xattr_data = NULL;
+	size_t xattr_size = 0;
+	int entry = DIRENT_DOT_FILE;
+
+	retval = iterate_inline_dir_region(fs, dir, flags,
+					   ((char *) inode->i_block) + EXT4_INLINE_DATA_DOTDOT_SIZE,
+					   EXT4_MIN_INLINE_DATA_SIZE - EXT4_INLINE_DATA_DOTDOT_SIZE,
+					   &entry, func, priv_data);
+	if (retval)
+		return retval;
+
+	retval = get_inline_xattr_data(inode, &xattr_data, &xattr_size);
+	if (retval)
+		return 0;
+
+	return iterate_inline_dir_region(fs, dir, flags, xattr_data, xattr_size,
+					 &entry, func, priv_data);
+}
 
 
 
@@ -139,8 +277,9 @@ void list_dir(ext2_ino_t inode)
         ls.options |= LONG_OPT;
         ls.options |= DELETED_OPT;
 
-        flags = DIRENT_FLAG_INCLUDE_EMPTY;
-        if (ls.options & DELETED_OPT) flags |= DIRENT_FLAG_INCLUDE_REMOVED;
+	flags = DIRENT_FLAG_INCLUDE_EMPTY;
+	if (ls.options & DELETED_OPT) flags |= DIRENT_FLAG_INCLUDE_REMOVED;
+	flags |= DIRENT_FLAG_INCLUDE_INLINE_DATA;
 
         retval = ext2fs_dir_iterate2(current_fs, inode, flags,0, list_dir_proc, &ls);
         fprintf(stdout, "\n");
@@ -454,11 +593,19 @@ static errcode_t local_dir_iterate3(ext2_filsys fs,
                 if (retval)
                         return retval;
         }
-        ctx.func = func;
-        ctx.priv_data = priv_data;
-        ctx.errcode = 0;
-        retval = local_block_iterate3(fs, *inode, BLOCK_FLAG_READ_ONLY, 0,
-                                       local_process_dir_block, &ctx);
+	        ctx.func = func;
+	        ctx.priv_data = priv_data;
+	        ctx.errcode = 0;
+	        if (inode_has_inline_data(inode)) {
+	                retval = local_inline_dir_iterate(fs, dir, inode,
+	                                                  flags | DIRENT_FLAG_INCLUDE_INLINE_DATA,
+	                                                  func, priv_data);
+	                if (!block_buf)
+	                        ext2fs_free_mem(&ctx.buf);
+	                return retval;
+	        }
+	        retval = local_block_iterate3(fs, *inode, BLOCK_FLAG_READ_ONLY, 0,
+	                                       local_process_dir_block, &ctx);
         if (!block_buf)
                 ext2fs_free_mem(&ctx.buf);
         if (retval)
