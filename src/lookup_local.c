@@ -38,6 +38,11 @@
 #define EXT4_XATTR_INDEX_SYSTEM 7
 extern ext2_filsys     current_fs ;
 
+static void block_bitmap_mark(ext2fs_block_bitmap bitmap, blk64_t block)
+{
+	ext2fs_mark_block_bitmap2(bitmap, block);
+}
+
 static const char *monstr[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
@@ -468,7 +473,7 @@ static int convert_dir_block(char *buf, int flags){
 	if (ctx->errcode)
                 return BLOCK_ABORT;
 	if (bmap)
-		ext2fs_mark_generic_bitmap(bmap, *blocknr);
+		block_bitmap_mark(bmap, *blocknr);
 	
 	i=0;
 	while  ((!(ctx->buf[i++])) && (i<8)) ;

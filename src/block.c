@@ -34,6 +34,11 @@
 
 extern ext2fs_block_bitmap 	  	bmap ; 
 
+static void block_bitmap_mark(ext2fs_block_bitmap bitmap, blk64_t block)
+{
+	ext2fs_mark_block_bitmap2(bitmap, block);
+}
+
 struct block_context {
 	ext2_filsys	fs;
 	int (*func)(ext2_filsys	fs,
@@ -216,9 +221,9 @@ static int mark_extent_block(ext2_filsys fs, char *extent_block ){
 			if (index_bl && index_bl <= fs->super->s_blocks_count ){ 
 				if (bmap){
 #ifdef EXT2_FLAG_64BITS
-					ext2fs_mark_generic_bmap(bmap, index_bl);
+					block_bitmap_mark(bmap, index_bl);
 #else
-					ext2fs_mark_generic_bitmap(bmap, index_bl);
+					block_bitmap_mark(bmap, index_bl);
 #endif
 					buf = malloc(fs->blocksize);
 					if (buf){
@@ -295,7 +300,7 @@ static int block_iterate_ind(blk_t *ind_block, blk_t ref_block,
 		return ret;
 	}
 	if (bmap)
-		ext2fs_mark_generic_bitmap(bmap, *ind_block);
+		block_bitmap_mark(bmap, *ind_block);
 	
 	block_nr = (blk_t *) ctx->ind_buf;
 	offset = 0;
@@ -387,7 +392,7 @@ static int block_iterate_dind(blk_t *dind_block, blk_t ref_block,
 		return ret;
 	}
 	if (bmap)
-		ext2fs_mark_generic_bitmap(bmap, *dind_block);
+		block_bitmap_mark(bmap, *dind_block);
 	
 	block_nr = (blk_t *) ctx->dind_buf;
 	offset = 0;
@@ -478,7 +483,7 @@ static int block_iterate_tind(blk_t *tind_block, blk_t ref_block,
 		return ret;
 	}
 	if (bmap)
-		ext2fs_mark_generic_bitmap(bmap, *tind_block);
+		block_bitmap_mark(bmap, *tind_block);
 
 	block_nr = (blk_t *) ctx->tind_buf;
 	offset = 0;

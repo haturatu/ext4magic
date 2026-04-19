@@ -61,6 +61,17 @@
 
 extern ext2_filsys current_fs;
 
+static int block_bitmap_test(ext2fs_block_bitmap bitmap, blk64_t block)
+{
+	return ext2fs_test_block_bitmap2(bitmap, block);
+}
+
+
+static void block_bitmap_mark(ext2fs_block_bitmap bitmap, blk64_t block)
+{
+	ext2fs_mark_block_bitmap2(bitmap, block);
+}
+
 
 struct privat {
 	int fd;
@@ -271,9 +282,9 @@ return ;
 	if (*blocknr >= fs->super->s_blocks_count)
 		return BLOCK_ERROR;
 	struct alloc_recover_stat *stat = priv;
-        if ( ext2fs_test_block_bitmap (fs->block_map, *blocknr ))
+        if (block_bitmap_test(fs->block_map, *blocknr))
 		(stat->allocated)++ ;	
-	if ((bmap) && ( ext2fs_test_block_bitmap (bmap, *blocknr )))
+	if (bmap && block_bitmap_test(bmap, *blocknr))
 		(stat->recovered)++ ;
 return 0;
 }
@@ -287,12 +298,12 @@ return 0;
 	if (*blocknr >= fs->super->s_blocks_count)
 		return BLOCK_ERROR;
 	struct alloc_stat *stat = priv;
-        if ( ext2fs_test_block_bitmap ( fs->block_map, *blocknr ))
+        if (block_bitmap_test(fs->block_map, *blocknr))
 		(stat->allocated)++ ;	
 	else
 		(stat->not_allocated)++ ;
 	if (bmap)
-		ext2fs_mark_generic_bitmap(bmap, *blocknr);
+		block_bitmap_mark(bmap, *blocknr);
 return 0;
 }
 
@@ -310,7 +321,7 @@ static int read_syslink_block ( ext2_filsys fs, blk64_t *blocknr, e2_blkcnt_t bl
 		return BLOCK_ERROR;
 
 	if (((struct privat*)priv)->flag){
-        	int allocated = ext2fs_test_block_bitmap ( fs->block_map, *blocknr );
+        	int allocated = block_bitmap_test(fs->block_map, *blocknr);
         	if ( allocated ){
 			((struct privat*)priv)->error = 1;
 //			fprintf(stderr,"Block %10lu is allocated.\n",*blocknr);
@@ -323,7 +334,7 @@ static int read_syslink_block ( ext2_filsys fs, blk64_t *blocknr, e2_blkcnt_t bl
 		 return (BLOCK_ERROR);
 	}
 	if (bmap)
-		ext2fs_mark_generic_bitmap(bmap, *blocknr);
+		block_bitmap_mark(bmap, *blocknr);
 return 0;
 }
 
