@@ -669,10 +669,10 @@ errcode_t local_block_iterate3(ext2_filsys fs,
 			uninit = 0;
 			if (extent.e_flags & EXT2_EXTENT_FLAGS_UNINIT)
 				uninit = EXT2_EXTENT_SET_BMAP_UNINIT;
-			for (blockcnt = extent.e_lblk, j = 0;
-			     j < extent.e_len;
-			     blk++, blockcnt++, j++) {
-				new_blk = blk;
+				for (blockcnt = extent.e_lblk, j = 0;
+				     j < extent.e_len;
+				     blk++, blockcnt++, j++) {
+					new_blk = blk;
 				r = (*ctx.func)(fs, &new_blk, blockcnt,
 						0, 0, priv_data);
 				ret |= r;
@@ -687,18 +687,25 @@ errcode_t local_block_iterate3(ext2_filsys fs,
 					if (ctx.errcode)
 						goto extent_errout;
 				}
+					if (ret & BLOCK_ABORT)
+						break;
+				}
 				if (ret & BLOCK_ABORT)
 					break;
 			}
-		}
-	if (bmap)
-		mark_extent_block(fs, (char*) inode.i_block);
 
-	extent_errout:
-		local_ext2fs_extent_free(handle);
-		ret |= BLOCK_ERROR | BLOCK_ABORT;
-		goto errout;
-	}
+			if (ctx.errcode)
+				goto extent_errout;
+			if (bmap)
+				mark_extent_block(fs, (char*) inode.i_block);
+			local_ext2fs_extent_free(handle);
+			goto abort_exit;
+
+		extent_errout:
+			local_ext2fs_extent_free(handle);
+			ret |= BLOCK_ERROR | BLOCK_ABORT;
+			goto errout;
+		}
 
 	/*
 	 * Iterate over normal data blocks
@@ -752,5 +759,4 @@ errout:
 	return (ret & BLOCK_ERROR) ? ctx.errcode : 0;
 }
 //___________________________________________________________________________________________________
-
 
