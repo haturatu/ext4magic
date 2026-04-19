@@ -48,6 +48,27 @@ static int inode_has_inline_data(struct ext2_inode *inode)
 }
 
 
+static int dir_inode_is_casefolded(ext2_ino_t ino)
+{
+	struct ext2_inode inode;
+
+	if (!ino || intern_read_inode(ino, &inode))
+		return 0;
+	return (inode.i_flags & EXT4_CASEFOLD_FL) != 0;
+}
+
+
+static int path_component_matches(ext2_ino_t dir_ino, const char *path_name,
+				  const char *entry_name)
+{
+	if (!strcmp(path_name, entry_name))
+		return 1;
+	if (!dir_inode_is_casefolded(dir_ino))
+		return 0;
+	return !strcasecmp(path_name, entry_name);
+}
+
+
 static errcode_t get_inline_xattr_data(struct ext2_inode *inode, char **buf_out,
 				       size_t *size_out)
 {
@@ -925,12 +946,12 @@ ext2_ino_t local_namei(struct dir_list_head_t * dir, char *path, __u32 t_after ,
 				if (dir->dir_inode != lp->inode_nr) {
 					break;
 				} 
-			}
-			else{
-				if (strcmp( p_path , lp->filename)) {
-					lp = GET_NEXT(dir,lp);
-					continue; 
 				}
+				else{
+					if (!path_component_matches(dir->dir_inode, p_path, lp->filename)) {
+						lp = GET_NEXT(dir,lp);
+						continue; 
+					}
 				d_list = get_dir3(NULL,dir->dir_inode,lp->inode_nr,dir->pathname,lp->filename,t_after,t_before, flag);
 				if (d_list){
 					ret_inode = local_namei(d_list, p1, t_after, t_before, flag);
