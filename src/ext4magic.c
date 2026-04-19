@@ -309,15 +309,6 @@ static void open_filesystem(char *device, int open_flags, blk_t superblock,
                 goto errout;
         }
 
-        if (EXT2_HAS_COMPAT_FEATURE(current_fs->super,
-                                    EXT4_FEATURE_COMPAT_ORPHAN_FILE)) {
-                fprintf(stderr,
-                        "%s uses unsupported ext4 feature: orphan_file\n",
-                        device);
-                goto errout;
-        }
-
-
         retval = ext2fs_read_inode_bitmap(current_fs);
         if (retval) {
                 fprintf(stderr,"%s Error %d while reading inode bitmap\n", device, retval);
