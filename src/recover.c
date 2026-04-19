@@ -727,9 +727,10 @@ return retval;
 
 
 // check Datafile return the percentage of not allocated blocks
-int check_file_recover(struct ext2_inode *inode){
+int check_file_recover(struct ext2_inode *inode, ext2_ino_t inode_nr){
 	int retval =-1;
 	struct alloc_stat stat;
+	int use_libext2fs = 0;
 
 	if (!(inode->i_mode & LINUX_S_IFMT)) // no type flag
 		return 0;
@@ -740,7 +741,14 @@ int check_file_recover(struct ext2_inode *inode){
 		 ! (ext2fs_inode_data_blocks(current_fs,inode)))
 		retval = 100;
 	else{
-		retval = local_block_iterate3 ( current_fs, *inode, BLOCK_FLAG_DATA_ONLY, NULL, check_block, &stat );
+		if (inode_nr && ext2fs_test_inode_bitmap(current_fs->inode_map, inode_nr))
+			use_libext2fs = 1;
+		if (use_libext2fs)
+			retval = ext2fs_block_iterate3(current_fs, inode_nr, BLOCK_FLAG_DATA_ONLY,
+						       NULL, check_block, &stat);
+		else
+			retval = local_block_iterate3(current_fs, *inode, BLOCK_FLAG_DATA_ONLY,
+						      NULL, check_block, &stat);
 		if ( retval ) return 0;
 	
 		if (stat.not_allocated)
