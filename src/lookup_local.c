@@ -834,12 +834,11 @@ void lookup_local(char* des_dir, struct dir_list_head_t * dir, __u32 t_after , _
 						break;
 					}
 
+					}
+					d_list = NULL;
 				}
-				if (d_list) clear_dir_list(d_list);
-				d_list = NULL;
+				lp = GET_NEXT(dir,lp);
 			}
-			lp = GET_NEXT(dir,lp);
-		}
 
 		//if (inode) 
 		free(inode);

@@ -26,7 +26,7 @@
 
 // add new Dir-List item
 struct dir_list_t* add_list_item (struct dir_list_head_t *head , ext2_ino_t nr, char* name ,char entry){
-	struct dir_list_t *this;
+	struct dir_list_t *this = NULL;
 	if( !nr || (! strcmp(name,"")))
 		return head->last;
 	
@@ -48,7 +48,7 @@ struct dir_list_t* add_list_item (struct dir_list_head_t *head , ext2_ino_t nr, 
 
 errout:
 	fprintf(stderr,"no free memory\n");
-	if (this->filename) free(this->filename);
+	if (this && this->filename) free(this->filename);
 	if (this) free(this);
 	return NULL;
 }	
