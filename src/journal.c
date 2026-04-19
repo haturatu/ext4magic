@@ -811,6 +811,7 @@ int init_journal(void)
 	unsigned int		wrapflag;
 	size_t			pt_bytes;
 	size_t			ptl_bytes;
+	__u32			j_incompat;
 
 	/* First, check to see if there's an ext2 superblock header */
 	retval = read_journal_block( 0, buf, 2048, &got);
@@ -846,6 +847,23 @@ int init_journal(void)
 		return JOURNAL_ERROR ;
 	}
 	journal_superblock_to_cpu((__u32*)jsb_buffer);
+
+	j_incompat = jsb->s_feature_incompat;
+	if (j_incompat & ~(JFS_FEATURE_INCOMPAT_REVOKE |
+			   JFS_FEATURE_INCOMPAT_64BIT |
+			   JFS_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
+		fprintf(stderr,
+			"Unsupported journal incompat feature flags: 0x%08x\n",
+			(unsigned int) j_incompat);
+		return JOURNAL_ERROR;
+	}
+
+	if (EXT2_HAS_COMPAT_FEATURE(current_fs->super,
+				    EXT4_FEATURE_COMPAT_FAST_COMMIT)) {
+		fprintf(stderr,
+			"Unsupported ext4 feature: fast_commit journal replay format\n");
+		return JOURNAL_ERROR;
+	}
 
 	blocksize = jsb->s_blocksize;
 	transaction = jsb->s_sequence;
@@ -1152,4 +1170,3 @@ int get_pool_block(char *buf){
 	}
 return ret;
 }
-
