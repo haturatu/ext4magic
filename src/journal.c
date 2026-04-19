@@ -721,12 +721,19 @@ static void extract_descriptor_block(char *buf, journal_superblock_t *jsb,
 	int			offset, tag_size = JBD_TAG_SIZE32;
 	char			*tagp;
 	journal_block_tag_t	*tag;
+	journal_block_tag3_t	*tag3;
 	unsigned int		blocknr;
 	__u32			tag_block;
 	__u32			tag_flags;
-
-	if (jsb->s_feature_incompat & JFS_FEATURE_INCOMPAT_64BIT)
+	int			csum_v3 = 0;
+	
+	if (jsb->s_feature_incompat & JFS_FEATURE_INCOMPAT_CSUM_V3) {
+		csum_v3 = 1;
+		tag_size = JBD_TAG3_SIZE32;
+	} else if (jsb->s_feature_incompat & JFS_FEATURE_INCOMPAT_64BIT)
 		tag_size = JBD_TAG_SIZE64;
+	else if (jsb->s_feature_incompat & JFS_FEATURE_INCOMPAT_CSUM_V2)
+		tag_size = JBD_TAG_SIZE_CSUM32;
 
 	offset = sizeof(journal_header_t);
 	blocknr = *blockp;
@@ -748,30 +755,44 @@ static void extract_descriptor_block(char *buf, journal_superblock_t *jsb,
 	do {
 		/* Work out the location of the current tag, and skip to
 		 * the next one... */
-		tagp = &buf[offset];
-		tag = (journal_block_tag_t *) tagp;
-		offset += tag_size;
+			tagp = &buf[offset];
+			tag = (journal_block_tag_t *) tagp;
+			tag3 = (journal_block_tag3_t *) tagp;
+			offset += tag_size;
 
 		/* ... and if we have gone too far, then we've reached the
 		   end of this block. */
 		if (offset > blocksize) break;
 
-		tag_block = ext2fs_be32_to_cpu(tag->t_blocknr) ;
-		tag_flags = ext2fs_be32_to_cpu(tag->t_flags);
+			if (csum_v3) {
+				tag_block = ext2fs_be32_to_cpu(tag3->t_blocknr);
+				tag_flags = ext2fs_be32_to_cpu(tag3->t_flags);
+			} else {
+				tag_block = ext2fs_be32_to_cpu(tag->t_blocknr);
+				if (tag_size == JBD_TAG_SIZE64)
+					tag_flags = ext2fs_be32_to_cpu(tag->t_flags);
+				else
+					tag_flags = ext2fs_be16_to_cpu(*((__be16 *) (tagp + 6)));
+			}
 
-		if (!(tag_flags & JFS_FLAG_SAME_UUID))
-			offset += 16;
+			if (!(tag_flags & JFS_FLAG_SAME_UUID))
+				offset += 16;
 
 #ifdef DEBUG
 //		fprintf(stderr, "  FS block %12lu logged at ", tag_block);
 //		fprintf(stderr, "sequence %u, ", transaction);
 //		fprintf(stderr, "journal block %u (flags 0x%x)\n", blocknr,tag_flags);
-		fprintf(stdout,"*");
+			fprintf(stdout,"*");
 #endif
-		pt->f_blocknr = tag_block ;
-		if (tag_size > JBD_TAG_SIZE32) pt->f_blocknr |= (__u64)ext2fs_be32_to_cpu(tag->t_blocknr_high) << 32;
-		pt->j_blocknr = blocknr;
-		pt->transaction = transaction;
+			pt->f_blocknr = tag_block ;
+			if (csum_v3) {
+				if (jsb->s_feature_incompat & JFS_FEATURE_INCOMPAT_64BIT)
+					pt->f_blocknr |= (__u64)ext2fs_be32_to_cpu(tag3->t_blocknr_high) << 32;
+			} else if (tag_size == JBD_TAG_SIZE64) {
+				pt->f_blocknr |= (__u64)ext2fs_be32_to_cpu(tag->t_blocknr_high) << 32;
+			}
+			pt->j_blocknr = blocknr;
+			pt->transaction = transaction;
 		pt++;
 		pt_count++;
 
