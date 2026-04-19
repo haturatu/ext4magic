@@ -1200,17 +1200,17 @@ exitval = EXIT_SUCCESS;
 #endif
 
 
-errout: 
-  if (current_fs)    {
+	errout: 
+	  if (current_fs)    {
 /*//FIXME in development	
 	if (bmap){
 		struct ext2fs_struct_loc_generic_bitmap *d_bmap = bmap ;
 		blockhex(stdout,(void*)d_bmap->bitmap,0,current_fs->super->s_blocks_count >> 3);
 	}*/
-	if (imap) ext2fs_free_inode_bitmap(imap);
-	if (bmap) ext2fs_free_inode_bitmap(bmap);
-	imap = NULL;
-	bmap = NULL;
+		if (imap) ext2fs_free_inode_bitmap(imap);
+		if (bmap) ext2fs_free_block_bitmap(bmap);
+		imap = NULL;
+		bmap = NULL;
 	if (magicfile) free(magicfile);
 	magicfile = NULL;
         retval = ext2fs_close(current_fs);

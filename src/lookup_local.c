@@ -835,6 +835,7 @@ void lookup_local(char* des_dir, struct dir_list_head_t * dir, __u32 t_after , _
 					}
 
 					}
+					if (d_list) clear_dir_list(d_list);
 					d_list = NULL;
 				}
 				lp = GET_NEXT(dir,lp);

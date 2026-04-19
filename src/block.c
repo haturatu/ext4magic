@@ -73,9 +73,7 @@ struct ext2_extent_handle {
         ext2_filsys             fs;
         ext2_ino_t              ino;
         struct ext2_inode       *inode;
-#ifdef EXT2_FLAG_64BITS
 	struct ext2_inode       inodebuf;
-#endif
         int                     type;
         int                     level;
         int                     max_depth;
@@ -145,7 +143,8 @@ errcode_t local_ext2fs_extent_open(ext2_filsys fs, struct ext2_inode inode,
 
         handle->ino = 0;
         handle->fs = fs;
-        handle->inode = &inode;
+        handle->inode = &handle->inodebuf;
+        memcpy(handle->inode, &inode, sizeof(struct ext2_inode));
 
         eh = (struct ext3_extent_header *) &handle->inode->i_block[0];
         for (i=0; i < EXT2_N_BLOCKS; i++)
@@ -759,4 +758,3 @@ errout:
 	return (ret & BLOCK_ERROR) ? ctx.errcode : 0;
 }
 //___________________________________________________________________________________________________
-
