@@ -139,8 +139,9 @@ void list_dir(ext2_ino_t inode)
         ls.options |= LONG_OPT;
         ls.options |= DELETED_OPT;
 
-        flags = DIRENT_FLAG_INCLUDE_EMPTY;
-        if (ls.options & DELETED_OPT) flags |= DIRENT_FLAG_INCLUDE_REMOVED;
+	flags = DIRENT_FLAG_INCLUDE_EMPTY;
+	if (ls.options & DELETED_OPT) flags |= DIRENT_FLAG_INCLUDE_REMOVED;
+	flags |= DIRENT_FLAG_INCLUDE_INLINE_DATA;
 
         retval = ext2fs_dir_iterate2(current_fs, inode, flags,0, list_dir_proc, &ls);
         fprintf(stdout, "\n");
@@ -454,11 +455,20 @@ static errcode_t local_dir_iterate3(ext2_filsys fs,
                 if (retval)
                         return retval;
         }
-        ctx.func = func;
-        ctx.priv_data = priv_data;
-        ctx.errcode = 0;
-        retval = local_block_iterate3(fs, *inode, BLOCK_FLAG_READ_ONLY, 0,
-                                       local_process_dir_block, &ctx);
+	        ctx.func = func;
+	        ctx.priv_data = priv_data;
+	        ctx.errcode = 0;
+	        if ((inode->i_flags & EXT4_INLINE_DATA_FL) &&
+	            ext2fs_test_inode_bitmap(current_fs->inode_map, dir)) {
+	                retval = ext2fs_dir_iterate2(fs, dir,
+	                                             flags | DIRENT_FLAG_INCLUDE_INLINE_DATA,
+	                                             block_buf, func, priv_data);
+	                if (!block_buf)
+	                        ext2fs_free_mem(&ctx.buf);
+	                return retval;
+	        }
+	        retval = local_block_iterate3(fs, *inode, BLOCK_FLAG_READ_ONLY, 0,
+	                                       local_process_dir_block, &ctx);
         if (!block_buf)
                 ext2fs_free_mem(&ctx.buf);
         if (retval)

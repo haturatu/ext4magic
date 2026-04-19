@@ -78,6 +78,48 @@ struct alloc_recover_stat{
 	__u32 recovered;};
 
 
+static int inode_has_inline_data(struct ext2_inode *inode)
+{
+	return (inode->i_flags & EXT4_INLINE_DATA_FL) != 0;
+}
+
+
+static int read_inline_data(ext2_ino_t inode_nr, struct ext2_inode *inode,
+			    char **buf_out, size_t *size_out)
+{
+	errcode_t retval;
+	size_t size;
+	char *buf;
+
+	*buf_out = NULL;
+	*size_out = 0;
+
+	if (!inode_has_inline_data(inode))
+		return 1;
+	if (!ext2fs_test_inode_bitmap(current_fs->inode_map, inode_nr))
+		return 1;
+
+	retval = ext2fs_inline_data_size(current_fs, inode_nr, &size);
+	if (retval)
+		return retval;
+
+	buf = malloc(size + 1);
+	if (!buf)
+		return ENOMEM;
+
+	retval = ext2fs_inline_data_get(current_fs, inode_nr, inode, buf, &size);
+	if (retval) {
+		free(buf);
+		return retval;
+	}
+
+	buf[size] = 0;
+	*buf_out = buf;
+	*size_out = size;
+	return 0;
+}
+
+
 
 // recover files from a "double quotes" listfile
 void recover_list(char *des_dir, char *input_file,__u32 t_after, __u32 t_before, int flag){
@@ -321,6 +363,7 @@ int recover_file( char* des_dir,char* pathname, char* filename, struct ext2_inod
 	struct utimbuf   touchtime;
 	mode_t i_mode;
 	int major, minor, type;
+	size_t inline_size = 0;
 
 #ifdef DEBUG
 	printf("RECOVER : INODE=%ld FILENAME=%s/%s\n",inode_nr, pathname,filename);
@@ -390,8 +433,28 @@ int recover_file( char* des_dir,char* pathname, char* filename, struct ext2_inod
 				retval = errno;
 				goto errout;
 			}
-			buf=malloc(current_fs->blocksize);
-			if (buf) {
+			if (inode_has_inline_data(inode)) {
+				retval = read_inline_data(inode_nr, inode, &buf, &inline_size);
+				if (retval) {
+					close(priv.fd);
+					unlink(helpname);
+					retval = -1;
+					goto errout;
+				}
+				if (write(priv.fd, buf, inline_size) != (ssize_t) inline_size) {
+					close(priv.fd);
+					unlink(helpname);
+					retval = -1;
+					goto errout;
+				}
+			} else {
+				buf=malloc(current_fs->blocksize);
+				if (!buf) {
+					fprintf(stderr,"ERROR: can no allocate memory\n");
+					retval = -1;
+					close(priv.fd);
+					goto errout;
+	 			}
 				priv.buf = buf;
 				priv.error = 0;
 				// iterate Data Blocks and if not allocated, write to file
@@ -411,22 +474,21 @@ int recover_file( char* des_dir,char* pathname, char* filename, struct ext2_inod
 					retval = ftruncate(priv.fd,i_size);
 					if (retval){
 						rec_error -= SEEK_ERROR ;	
+						}
 					}
-				}
 		
 			}
-			else {
-				fprintf(stderr,"ERROR: can no allocate memory\n");
-				retval = -1;
-				close(priv.fd);
-				goto errout;
- 			}
 			close(priv.fd);
 		 break;
 
 //symbolic link	
 		case LINUX_S_IFLNK :
-			  if (ext2fs_inode_data_blocks(current_fs,inode)){
+			  if (inode_has_inline_data(inode)) {
+				retval = read_inline_data(inode_nr, inode, &buf, &inline_size);
+				if (retval)
+					goto errout;
+			  }
+			  else if (ext2fs_inode_data_blocks(current_fs,inode)){
 				buf = malloc(current_fs->blocksize + 1); 
 				if (buf) {
 					memset(buf,0,current_fs->blocksize + 1);
@@ -571,7 +633,7 @@ int check_file_stat(struct ext2_inode *inode){
 
 	stat.allocated = 0;
 	stat.recovered = 0;
-	if ((! inode->i_blocks) || (LINUX_S_ISLNK(inode->i_mode) && (inode->i_size < EXT2_N_BLOCKS*4)) ||
+	if (inode_has_inline_data(inode) || (! inode->i_blocks) || (LINUX_S_ISLNK(inode->i_mode) && (inode->i_size < EXT2_N_BLOCKS*4)) ||
 		 ! (ext2fs_inode_data_blocks(current_fs,inode)))
 		retval = 1;
 	else{
@@ -593,7 +655,7 @@ int check_file_recover(struct ext2_inode *inode){
 
 	stat.allocated = 0;
 	stat.not_allocated = 0;
-	if ((! inode->i_blocks) || (LINUX_S_ISLNK(inode->i_mode) && (inode->i_size < EXT2_N_BLOCKS*4)) ||
+	if (inode_has_inline_data(inode) || (! inode->i_blocks) || (LINUX_S_ISLNK(inode->i_mode) && (inode->i_size < EXT2_N_BLOCKS*4)) ||
 		 ! (ext2fs_inode_data_blocks(current_fs,inode)))
 		retval = 100;
 	else{

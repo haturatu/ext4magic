@@ -270,14 +270,6 @@ static void open_filesystem(char *device, int open_flags, blk_t superblock,
         }
 
         if (EXT2_HAS_INCOMPAT_FEATURE(current_fs->super,
-                                      EXT4_FEATURE_INCOMPAT_INLINE_DATA)) {
-                fprintf(stderr,
-                        "%s uses unsupported ext4 feature: inline_data\n",
-                        device);
-                goto errout;
-        }
-
-        if (EXT2_HAS_INCOMPAT_FEATURE(current_fs->super,
                                       EXT4_FEATURE_INCOMPAT_EA_INODE)) {
                 fprintf(stderr,
                         "%s uses unsupported ext4 feature: ea_inode\n",
